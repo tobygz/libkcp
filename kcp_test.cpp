@@ -11,7 +11,7 @@ int main() {
     gettimeofday(&time, NULL);
     srand((time.tv_sec * 1000) + (time.tv_usec / 1000));
 
-    UDPSession *sess = UDPSession::DialWithOptions("127.0.0.1", 9999, 2,2);
+    UDPSession *sess = UDPSession::DialWithOptions("127.0.0.1", 20020, 0,0);
     sess->NoDelay(1, 20, 2, 1);
     sess->WndSize(128, 128);
     sess->SetMtu(1400);
@@ -32,7 +32,7 @@ int main() {
         ssize_t n = 0;
         do {
             n = sess->Read(buf, 128);
-            if (n > 0) { printf("%s\n", buf); }
+            if (n > 0) { printf("recved %s\n", buf); }
             usleep(33000);
             sess->Update(iclock());
         } while(n==0);

@@ -14,6 +14,9 @@ private:
     byte m_streambuf[65535];
     size_t m_streambufsiz{0};
 
+    byte m_iniBuf[1024];
+    int m_iniBufLen;
+
     FEC fec;
     uint32_t pkt_idx{0};
     std::vector<row_type> shards;
@@ -23,6 +26,13 @@ public:
     UDPSession(const UDPSession &) = delete;
 
     UDPSession &operator=(const UDPSession &) = delete;
+
+    void initMem(byte* src, int len);
+    void writeInitMem();
+
+    ikcpcb * getkcp(){ return m_kcp; }
+    // Dial connects to the remote server and returns UDPSession.
+    static UDPSession *Listen(uint16_t port);
 
     // Dial connects to the remote server and returns UDPSession.
     static UDPSession *Dial(const char *ip, uint16_t port);
@@ -41,6 +51,9 @@ public:
 
     // Write writes into kcp with buffer empty sz.
     ssize_t Write(const char *buf, size_t sz) noexcept;
+
+    // Write writes into kcp with buffer empty sz.
+    ssize_t Input(const char *buf, size_t sz) noexcept;
 
     // Set DSCP value
     int SetDSCP(int dscp) noexcept;
@@ -71,7 +84,7 @@ private:
     // output udp packet
     ssize_t output(const void *buffer, size_t length);
 
-    static UDPSession *createSession(int sockfd);
+    static UDPSession *createSession(int sockfd, int conv = 0);
 
 
 };

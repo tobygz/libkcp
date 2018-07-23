@@ -7,6 +7,128 @@
 #include <unistd.h>
 #include <cstring>
 
+void printBytes(char* pbyte, int size, char* flag ){
+    char info[1024] = {0};
+    for(int i=0; i<size; i++){
+        int v = *(unsigned char*)(pbyte+i);
+        sprintf(info,"%s %d",info, v);
+    }
+    printf("[%s] raw bytes: %s size: %d\n", flag, info, size );
+}
+
+
+int udp_socket_connect(struct sockaddr_in* servaddr, int port)
+{
+
+    struct sockaddr_in my_addr;
+    int fd=socket(PF_INET, SOCK_DGRAM, 0);
+    if(fd==-1){
+        perror("fd invalid");
+        return  -1;
+    }
+
+    /*设置socket属性，端口可以重用*/
+    int opt=SO_REUSEADDR;
+    setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&opt,sizeof(opt));
+
+    bzero(&my_addr, sizeof(my_addr));
+    my_addr.sin_family = PF_INET;
+    my_addr.sin_port = htons(port);
+    my_addr.sin_addr.s_addr = INADDR_ANY;
+    if (bind(fd, (struct sockaddr *) &my_addr, sizeof(struct sockaddr)) == -1) 
+    {
+        perror("bind");
+        exit(1);
+    } 
+    else
+    {
+        printf("IP and port bind success \n");
+    }
+    connect(fd,(struct sockaddr*)servaddr,sizeof(struct sockaddr_in));
+
+    return fd;
+
+}
+
+void UDPSession::writeInitMem(){
+    Input((const char*) m_iniBuf, m_iniBufLen );
+}
+
+UDPSession *
+UDPSession::Listen(uint16_t port) {
+    int sockfd;      /* socket */
+    struct sockaddr_in serveraddr;  /* server's addr */
+    struct sockaddr_in clientaddr;  /* client addr */
+    struct hostent *hostp;  /* client host info */
+    char *hostaddrp;    /* dotted decimal host addr string */
+    int optval;     /* flag value for setsockopt */
+    int n;          /* message byte size */
+
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        printf("ERROR opening socket");
+        exit(0);
+    }
+
+    optval = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR,
+            (const void *)&optval, sizeof(int));
+
+    bzero((char *)&serveraddr, sizeof(serveraddr));
+    serveraddr.sin_family = AF_INET;
+    serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    serveraddr.sin_port = htons((unsigned short)port);
+
+    if (bind(sockfd, (struct sockaddr *)&serveraddr,
+                sizeof(serveraddr)) < 0) {
+        printf("ERROR on binding");
+        exit(0);
+    }
+
+    socklen_t clientlen = sizeof(clientaddr);
+    char buf[1024] = {0};
+    int BUFSIZE = 1024;
+    while (1) {
+        n = recvfrom(sockfd, buf, BUFSIZE, 0, (struct sockaddr *)&clientaddr, &clientlen);
+        if (n < 0){
+            printf("ERROR in recvfrom");
+            exit(0);
+        }
+        int conv = 0;
+        memcpy((void*)&conv, buf, 4 );
+        printf("conv is : %d\n", conv );
+
+        int clifd = udp_socket_connect(&clientaddr, port);
+        /*
+        for(int j=0;j<10;j++){
+            int ns = write(clifd, buf, n);
+            int nr = recv(clifd, buf, n,0);
+            printf("n: %d ns: %d nr: %d\n", n, ns, nr );
+        }
+        */
+        UDPSession *psess = UDPSession::createSession(clifd, conv);
+        psess->initMem((byte*)buf, n);
+        return psess;
+
+        //exit(0);
+        /* 
+         * sendto: echo the input back to the client 
+         */
+        /*
+        n = sendto(sockfd, buf, n, 0,
+                (struct sockaddr *)&clientaddr, clientlen);
+        if (n < 0)
+            error("ERROR in sendto");
+        */
+    } 
+}
+
+void UDPSession::initMem(byte* src, int len){
+    memset(m_iniBuf,0, sizeof(m_iniBuf));
+    memcpy(m_iniBuf, src, len);
+    m_iniBufLen = len;
+}
+
 UDPSession *
 UDPSession::Dial(const char *ip, uint16_t port) {
     struct sockaddr_in saddr;
@@ -74,7 +196,7 @@ UDPSession::dialIPv6(const char *ip, uint16_t port) {
 }
 
 UDPSession *
-UDPSession::createSession(int sockfd) {
+UDPSession::createSession(int sockfd, int conv) {
     int flags = fcntl(sockfd, F_GETFL, 0);
     if (flags < 0) {
         return nullptr;
@@ -86,17 +208,23 @@ UDPSession::createSession(int sockfd) {
 
     UDPSession *sess = new(UDPSession);
     sess->m_sockfd = sockfd;
-    sess->m_kcp = ikcp_create(IUINT32(rand()), sess);
+    if(conv == 0){
+        conv = IUINT32(rand());
+        printf("cli conv: %d\n", conv );
+    }
+    sess->m_kcp = ikcp_create( conv, sess);
     sess->m_kcp->output = sess->out_wrapper;
     return sess;
 }
 
-
 void
 UDPSession::Update(uint32_t current) noexcept {
+    m_kcp->current = current;
+    ikcp_flush(m_kcp);
     for (;;) {
         ssize_t n = recv(m_sockfd, m_buf, sizeof(m_buf), 0);
         if (n > 0) {
+            //printf("raw recv sock size: %d\n", n );
             if (fec.isEnabled()) {
                 // decode FEC packet
                 auto pkt = fec.Decode(m_buf, static_cast<size_t>(n));
@@ -130,14 +258,14 @@ UDPSession::Update(uint32_t current) noexcept {
                     }
                 }
             } else { // fec disabled
-                ikcp_input(m_kcp, (char *) (m_buf), n);
+                int ret = ikcp_input(m_kcp, (char *) (m_buf), n);
+                assert(ret>=0);
             }
         } else {
             break;
         }
     }
-    m_kcp->current = current;
-    ikcp_flush(m_kcp);
+    //ikcp_update(m_kcp, current);
 }
 
 void
@@ -188,6 +316,15 @@ UDPSession::Write(const char *buf, size_t sz) noexcept {
     } else return n;
 }
 
+
+ssize_t
+UDPSession::Input(const char *buf, size_t sz) noexcept {
+    int n = ikcp_input(m_kcp, const_cast<char *>(buf), int(sz));
+    if (n == 0) {
+        return sz;
+    } else return n;
+}
+
 int
 UDPSession::SetDSCP(int iptos) noexcept {
     iptos = (iptos << 2) & 0xFF;
@@ -219,7 +356,7 @@ UDPSession::out_wrapper(const char *buf, int len, struct IKCPCB *, void *user) {
         // copy "2B size + data" to shards
         auto slen = len + 2;
         sess->shards[sess->pkt_idx] =
-                std::make_shared<std::vector<byte>>(&sess->m_buf[fecHeaderSize], &sess->m_buf[fecHeaderSize + slen]);
+            std::make_shared<std::vector<byte>>(&sess->m_buf[fecHeaderSize], &sess->m_buf[fecHeaderSize + slen]);
 
         // count number of data shards
         sess->pkt_idx++;

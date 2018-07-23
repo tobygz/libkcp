@@ -4,8 +4,9 @@
 
 #include "galois.h"
 
+#define FIELDSIZE 256
 // The number of elements in the field.
-const int fieldSize = 256;
+const int fieldSize = FIELDSIZE;
 
 // The polynomial used to generate the logarithm table.
 //
@@ -18,7 +19,7 @@ const int fieldSize = 256;
 const int generatingPolynomial = 29;
 
 
-byte logTable[fieldSize] = {
+byte logTable[FIELDSIZE] = {
         0, 0, 1, 25, 2, 50, 26, 198,
         3, 223, 51, 238, 27, 104, 199, 75,
         4, 100, 224, 14, 52, 141, 239, 129,
